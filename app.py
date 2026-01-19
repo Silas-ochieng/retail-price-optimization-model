@@ -26,6 +26,29 @@ if 'model' not in st.session_state:
 if 'model_info' not in st.session_state:
     st.session_state.model_info = None
 
+# Try to auto-load the trained model
+@st.cache_resource
+def load_trained_model():
+    try:
+        import os
+        if os.path.exists('trained_model.pkl'):
+            model = joblib.load('trained_model.pkl')
+            return model, True
+    except Exception as e:
+        st.warning(f"Could not auto-load model: {str(e)}")
+    return None, False
+
+# Auto-load trained model on startup
+auto_model, model_loaded = load_trained_model()
+if auto_model and st.session_state.model is None:
+    st.session_state.model = auto_model
+    st.session_state.model_info = {
+        "name": "Trained Random Forest Model",
+        "n_features": auto_model.n_features_in_,
+        "features": ['comp_1_diff', 'comp_2_diff', 'comp_3_diff', 'fp1_diff', 'fp2_diff', 'fp3_diff', 'product_score', 'total_price', 'freight_price', 'customers'],
+        "auto_loaded": True
+    }
+
 # Sidebar
 with st.sidebar:
     st.header("Configuration")
@@ -33,6 +56,13 @@ with st.sidebar:
     
     # Model loading
     st.subheader("Model Setup")
+    
+    # Display auto-loaded model status
+    if st.session_state.model is not None and st.session_state.model_info.get('auto_loaded'):
+        st.success("✅ Trained model auto-loaded")
+        if st.button("🔄 Reload Model"):
+            st.cache_resource.clear()
+            st.rerun()
     
     # Option 1: Upload model file
     model_file = st.file_uploader("Upload trained model (.pkl or .joblib)", type=["pkl", "joblib"])
@@ -49,7 +79,7 @@ with st.sidebar:
         # Create and train a simple demo model
         np.random.seed(42)
         n_samples = 1000
-        X_demo = np.random.randn(n_samples, 7)  # 7 features
+        X_demo = np.random.randn(n_samples, 10)  # 10 features
         y_demo = 20 + X_demo[:, 1] * 15 + np.random.randn(n_samples) * 5  # Price
         
         demo_model = RandomForestRegressor(n_estimators=10, random_state=42)
@@ -58,9 +88,8 @@ with st.sidebar:
         st.session_state.model = demo_model
         st.session_state.model_info = {
             "name": "Demo Random Forest",
-            "n_features": 7,
-            "features": ["demand", "competitor_price", "inventory", 
-                        "seasonality", "cost", "elasticity", "days_to_expiry"],
+            "n_features": 10,
+            "features": ['comp_1_diff', 'comp_2_diff', 'comp_3_diff', 'fp1_diff', 'fp2_diff', 'fp3_diff', 'product_score', 'total_price', 'freight_price', 'customers'],
             "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         st.success("✅ Demo model loaded successfully")
@@ -133,29 +162,35 @@ with tab1:
                 else:
                     feature_values[feature] = st.number_input(f"{feature}", value=0.0, key=f"feature_{i}")
         else:
-            # Default features if no model info
-            demand = st.number_input("Product Demand", min_value=0, value=100)
-            competitor_price = st.number_input("Competitor Price ($)", min_value=0.0, value=50.0)
-            inventory = st.number_input("Current Inventory", min_value=0, value=500)
-            seasonality = st.slider("Seasonality Factor", 0.5, 1.5, 1.0)
-            cost = st.number_input("Product Cost ($)", min_value=0.0, value=20.0)
-            elasticity = st.slider("Price Elasticity", -2.0, -0.5, -1.0)
-            days_to_expiry = st.number_input("Days to Expiry", min_value=0, value=30)
+            # Default features if no model info - use the 10 required features
+            comp_1_diff = st.number_input("Competitor 1 Price Difference", value=0.0)
+            comp_2_diff = st.number_input("Competitor 2 Price Difference", value=0.0)
+            comp_3_diff = st.number_input("Competitor 3 Price Difference", value=0.0)
+            fp1_diff = st.number_input("Freight Price 1 Difference", value=0.0)
+            fp2_diff = st.number_input("Freight Price 2 Difference", value=0.0)
+            fp3_diff = st.number_input("Freight Price 3 Difference", value=0.0)
+            product_score = st.number_input("Product Score", min_value=0.0, value=50.0)
+            total_price = st.number_input("Total Price ($)", min_value=0.0, value=100.0)
+            freight_price = st.number_input("Freight Price ($)", min_value=0.0, value=10.0)
+            customers = st.number_input("Number of Customers", min_value=0, value=100)
             
             feature_values = {
-                "demand": demand,
-                "competitor_price": competitor_price,
-                "inventory": inventory,
-                "seasonality": seasonality,
-                "cost": cost,
-                "elasticity": elasticity,
-                "days_to_expiry": days_to_expiry
+                "comp_1_diff": comp_1_diff,
+                "comp_2_diff": comp_2_diff,
+                "comp_3_diff": comp_3_diff,
+                "fp1_diff": fp1_diff,
+                "fp2_diff": fp2_diff,
+                "fp3_diff": fp3_diff,
+                "product_score": product_score,
+                "total_price": total_price,
+                "freight_price": freight_price,
+                "customers": customers
             }
     
     with col2:
         st.subheader("Price Settings")
-        min_price = st.number_input("Minimum Price ($)", min_value=0.0, value=cost if 'cost' in locals() else 20.0)
-        max_price = st.number_input("Maximum Price ($)", min_value=0.0, value=100.0)
+        min_price = st.number_input("Minimum Price ($)", min_value=0.0, value=total_price if 'total_price' in locals() else 50.0)
+        max_price = st.number_input("Maximum Price ($)", min_value=0.0, value=150.0)
         
         st.markdown("---")
         st.subheader("Prediction Controls")
@@ -171,8 +206,8 @@ with tab1:
                     features_list = st.session_state.model_info['features']
                     X = np.array([[feature_values.get(f, 0) for f in features_list]])
                 else:
-                    X = np.array([[demand, competitor_price, inventory, seasonality, 
-                                 cost, elasticity, days_to_expiry]])
+                    X = np.array([[comp_1_diff, comp_2_diff, comp_3_diff, fp1_diff, fp2_diff, 
+                                 fp3_diff, product_score, total_price, freight_price, customers]])
                 
                 # Make prediction
                 optimal_price = st.session_state.model.predict(X)[0]
@@ -183,18 +218,14 @@ with tab1:
                 # Display results
                 st.subheader("📊 Optimization Results")
                 
-                col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3 = st.columns(3)
                 
                 with col1:
                     st.metric("Optimal Price", f"${optimal_price:.2f}")
                 with col2:
-                    margin = optimal_price - cost
-                    margin_pct = (margin / cost * 100) if cost > 0 else 0
-                    st.metric("Margin", f"${margin:.2f}", f"{margin_pct:.1f}%")
+                    st.metric("Total Price (Input)", f"${total_price:.2f}")
                 with col3:
-                    st.metric("Competitor Price", f"${competitor_price:.2f}")
-                with col4:
-                    price_diff = optimal_price - competitor_price
+                    price_diff = optimal_price - total_price
                     st.metric("Price Difference", f"${price_diff:.2f}")
                 
                 # Visualization
@@ -206,11 +237,11 @@ with tab1:
                 fig = go.Figure(data=[
                     go.Bar(
                         name='Prices',
-                        x=['Cost', 'Competitor', 'Optimal'],
-                        y=[cost, competitor_price, optimal_price],
-                        text=[f'${cost:.2f}', f'${competitor_price:.2f}', f'${optimal_price:.2f}'],
+                        x=['Total Price', 'Optimal'],
+                        y=[total_price, optimal_price],
+                        text=[f'${total_price:.2f}', f'${optimal_price:.2f}'],
                         textposition='auto',
-                        marker_color=['red', 'orange', 'green']
+                        marker_color=['orange', 'green']
                     )
                 ])
                 
@@ -370,13 +401,16 @@ with tab4:
         Your CSV should include these columns:
         - `product_id` (optional): Unique identifier
         - `product_name` (optional): Product description
-        - `demand`: Expected demand units
-        - `competitor_price`: Competitor's price in $
-        - `inventory`: Current stock level
-        - `seasonality`: Seasonal factor (0.5-1.5)
-        - `cost`: Product cost in $
-        - `elasticity`: Price elasticity (-2.0 to -0.5)
-        - `days_to_expiry`: Days until expiry
+        - `comp_1_diff`: Competitor 1 price difference
+        - `comp_2_diff`: Competitor 2 price difference
+        - `comp_3_diff`: Competitor 3 price difference
+        - `fp1_diff`: Freight price 1 difference
+        - `fp2_diff`: Freight price 2 difference
+        - `fp3_diff`: Freight price 3 difference
+        - `product_score`: Product score/rating
+        - `total_price`: Total price in $
+        - `freight_price`: Freight price in $
+        - `customers`: Number of customers
         """)
     
     with col2:
@@ -391,13 +425,16 @@ with tab4:
             sample_data = {
                 'product_id': [f'PROD_{i:03d}' for i in range(1, n_samples+1)],
                 'product_name': [f'Product {i}' for i in range(1, n_samples+1)],
-                'demand': np.random.randint(50, 500, n_samples),
-                'competitor_price': np.random.uniform(30, 80, n_samples).round(2),
-                'inventory': np.random.randint(100, 1000, n_samples),
-                'seasonality': np.random.uniform(0.5, 1.5, n_samples).round(2),
-                'cost': np.random.uniform(15, 40, n_samples).round(2),
-                'elasticity': np.random.uniform(-2.0, -0.5, n_samples).round(2),
-                'days_to_expiry': np.random.randint(1, 60, n_samples)
+                'comp_1_diff': np.random.uniform(-10, 10, n_samples).round(2),
+                'comp_2_diff': np.random.uniform(-10, 10, n_samples).round(2),
+                'comp_3_diff': np.random.uniform(-10, 10, n_samples).round(2),
+                'fp1_diff': np.random.uniform(-5, 5, n_samples).round(2),
+                'fp2_diff': np.random.uniform(-5, 5, n_samples).round(2),
+                'fp3_diff': np.random.uniform(-5, 5, n_samples).round(2),
+                'product_score': np.random.uniform(1, 5, n_samples).round(2),
+                'total_price': np.random.uniform(20, 100, n_samples).round(2),
+                'freight_price': np.random.uniform(5, 20, n_samples).round(2),
+                'customers': np.random.randint(50, 500, n_samples)
             }
             
             df_sample = pd.DataFrame(sample_data)
